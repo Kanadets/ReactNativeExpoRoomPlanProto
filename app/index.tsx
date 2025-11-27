@@ -1,100 +1,183 @@
 import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   Button,
+  FlatList,
   Modal,
-  NativeSyntheticEvent,
   StyleSheet,
   Text,
-  TextInput,
+  TouchableOpacity,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import ExpoRoomPlanModule, {
   ExpoRoomPlanAvailability,
+  ExpoRoomPlanScanResult,
   ExpoRoomPlanView,
 } from "@/modules/ExpoRoomPlan";
-
-import { OnScanCompleteEvent } from "@/modules/ExpoRoomPlan/src/ExpoRoomPlanView";
 
 export default function Index() {
   const insets = useSafeAreaInsets();
 
+  console.log("ExpoRoomPlanModule");
+
   const [availability, setAvailability] =
     useState<ExpoRoomPlanAvailability | null>(null);
+  const [scans, setScans] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [scanName, setScanName] = useState("Untitled Scan");
+  const [scanName, setScanName] = useState("My Room");
 
   useEffect(() => {
-    ExpoRoomPlanModule.checkAvailability().then(setAvailability);
+    checkSetup();
   }, []);
 
-  const handleScanNameChange = (text: string) => {
-    setScanName(text);
+  useEffect(() => {
+    const subscription = ExpoRoomPlanModule.addListener(
+      "onScanComplete",
+      (event) => {
+        // Handle the global event
+        handleScanComplete(event);
+      }
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  const checkSetup = async () => {
+    const avail = await ExpoRoomPlanModule.checkAvailability();
+    setAvailability(avail);
+    loadScans();
   };
 
-  const handleScanComplete = (
-    event: NativeSyntheticEvent<OnScanCompleteEvent>
-  ) => {
-    console.log("UUID:", event.nativeEvent);
-    setIsProcessing(false);
+  const loadScans = async () => {
+    try {
+      const files = await ExpoRoomPlanModule.getRoomScans();
+      setScans(files);
+    } catch (e) {
+      console.error("Failed to load scans", e);
+    }
+  };
+
+  const handleScanComplete = (event: ExpoRoomPlanScanResult) => {
+    const { timestamp, error, usdzUri } = event;
+
+    console.log("Scan complete at", timestamp);
     setScanning(false);
+
+    if (error) {
+      alert("Scan failed: " + error);
+    } else {
+      console.log("Saved at:", usdzUri);
+      setIsProcessing(false);
+      loadScans(); // Refresh list
+    }
   };
 
-  console.log("isProcessing", isProcessing);
-  console.log("scanning", scanning);
+  const handleClearAll = () => {
+    Alert.alert(
+      "Delete All Scans",
+      "Are you sure you want to delete all room scans? This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await ExpoRoomPlanModule.clearAllScans();
+              setScans([]); // Clear the list in UI immediately
+            } catch (e) {
+              console.error("Failed to clear scans", e);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.status}>
-          {availability?.isAvailable ? "Available" : "Not available"}
-        </Text>
-
-        {!availability?.isAvailable && (
-          <Text>{availability?.availabilityReason}</Text>
-        )}
-
-        {availability?.isAvailable && (
-          <>
-            <TextInput
-              style={styles.scanNameInput}
-              value={scanName}
-              onChangeText={handleScanNameChange}
-              placeholder="Enter scan name"
-            />
-            <Button
-              title={isProcessing ? "Processing..." : "Start Room Plan Scan"}
-              disabled={isProcessing}
-              onPress={() => setScanning(true)}
-            />
-          </>
+    <View style={[styles.container]}>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.title}>Room Scanner</Text>
+          <Text>
+            Status: {availability?.isAvailable ? "Ready" : "Unavailable"}
+          </Text>
+        </View>
+        {scans.length > 0 && (
+          <Button title="Clear All" color="red" onPress={handleClearAll} />
         )}
       </View>
 
-      {/* Show the scanner in a Modal or full screen */}
-      <Modal visible={scanning} animationType="slide">
+      {/* --- Scan List --- */}
+      <FlatList
+        data={scans}
+        keyExtractor={(item) => item}
+        style={styles.list}
+        ListEmptyComponent={
+          <Text style={{ textAlign: "center", marginTop: 20 }}>
+            No scans yet
+          </Text>
+        }
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.scanItem}
+            onPress={() => ExpoRoomPlanModule.previewScan(item)}
+          >
+            <Text style={styles.scanTitle}>📄 {item.split("/").pop()}</Text>
+            <Text style={styles.scanPath} numberOfLines={1}>
+              {item}
+            </Text>
+          </TouchableOpacity>
+        )}
+      />
+
+      {/* --- New Scan Controls --- */}
+      {availability?.isAvailable && (
+        <View style={styles.controls}>
+          <Button
+            disabled={isProcessing}
+            title={isProcessing ? "Processing..." : "Start New Scan"}
+            onPress={() => setScanning(true)}
+          />
+          {isProcessing && <ActivityIndicator size="small" color="#0000ff" />}
+        </View>
+      )}
+
+      {/* --- Scanner Modal --- */}
+      <Modal
+        visible={scanning}
+        animationType="slide"
+        presentationStyle="fullScreen"
+      >
         <View style={{ flex: 1, backgroundColor: "black" }}>
           <ExpoRoomPlanView
             style={{ flex: 1 }}
             scanName={scanName}
             onScanProcessing={() => setIsProcessing(true)}
-            onScanComplete={handleScanComplete}
           />
 
-          <View
-            style={[
-              styles.overlay,
-              { paddingTop: insets.top, paddingHorizontal: 10 },
-            ]}
-          >
-            <Text style={styles.scanName}>{scanName}</Text>
-            <Button
-              title={isProcessing ? "Processing..." : "Close / Cancel"}
-              disabled={isProcessing}
-              onPress={() => setScanning(false)}
-            />
+          {/* Overlay UI */}
+          <View style={styles.overlay}>
+            {isProcessing ? (
+              <View style={styles.processingBadge}>
+                <Text style={{ color: "white", fontWeight: "bold" }}>
+                  Processing Room...
+                </Text>
+                <Text style={{ color: "#ddd", fontSize: 12 }}>Please wait</Text>
+              </View>
+            ) : (
+              <Button
+                title="Cancel"
+                color="white"
+                onPress={() => setScanning(false)}
+              />
+            )}
           </View>
         </View>
       </Modal>
@@ -103,30 +186,55 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
-  content: { flex: 1, justifyContent: "center", alignItems: "center" },
-  status: { fontSize: 18, marginBottom: 20 },
-  overlay: {
-    position: "absolute",
-    backgroundColor: "rgba(255,255,255,0.8)",
-    display: "flex",
+  container: { flex: 1, backgroundColor: "#f5f5f5" },
+  header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    width: "100%",
+    padding: 20,
+    backgroundColor: "white",
+    borderBottomWidth: 1,
+    borderColor: "#eee",
   },
-  scanNameInput: {
-    height: 40,
-    width: "50%",
-    borderColor: "gray",
-    borderWidth: 1,
-    marginBottom: 20,
-    paddingHorizontal: 10,
-  },
-  scanName: {
-    fontSize: 20,
-    fontWeight: "bold",
+  title: { fontSize: 24, fontWeight: "bold" },
+  list: { flex: 1, padding: 15 },
+  scanItem: {
+    backgroundColor: "white",
+    padding: 15,
     marginBottom: 10,
-    textAlign: "center",
+    borderRadius: 8,
+  },
+  scanTitle: { fontSize: 16, fontWeight: "600" },
+  scanPath: { fontSize: 12, color: "#888", marginTop: 4 },
+  controls: {
+    padding: 20,
+    backgroundColor: "white",
+    borderTopWidth: 1,
+    borderColor: "#eee",
+    display: "flex",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  overlay: {
+    position: "absolute",
+    bottom: 50,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+  },
+  processingBadge: {
+    backgroundColor: "#333",
+    padding: 20,
+    borderRadius: 12,
+    alignItems: "center",
   },
 });

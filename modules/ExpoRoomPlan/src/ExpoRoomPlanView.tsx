@@ -1,15 +1,9 @@
 import { requireNativeViewManager } from "expo-modules-core";
 import * as React from "react";
-import { NativeSyntheticEvent, ViewProps } from "react-native";
-
-export type OnScanCompleteEvent = {
-  uuid: string;
-  error?: string;
-};
+import { ViewProps } from "react-native";
 
 export type ExpoRoomPlanViewProps = {
   scanName?: string;
-  onScanComplete?: (event: NativeSyntheticEvent<OnScanCompleteEvent>) => void;
   onScanProcessing?: () => void;
 } & ViewProps;
 
