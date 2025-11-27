@@ -12,6 +12,14 @@ public class ExpoRoomPlanModule: Module {
       AsyncFunction("checkAvailability", {() -> ExpoRoomPlanAvailability in
         return await getExpoRoomPlanAvailability()
       })
+      
+      View(ExpoRoomPlanView.self) {
+          Events("onScanComplete", "onScanProcessing")
+          
+          Prop("scanName") { (view: ExpoRoomPlanView, name: String) in
+              view.scanName = name
+          }
+      }
   }
 }
 

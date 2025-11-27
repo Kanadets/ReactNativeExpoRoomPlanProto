@@ -10,7 +10,12 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.kanadets.RoomScanProto"
+      "bundleIdentifier": "com.kanadets.RoomScanProto",
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app needs access to your camera to scan rooms.",
+        "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to save scans.",
+        "NSPhotoLibraryAddUsageDescription": "This app needs access to your photo library to save scans."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -20,7 +25,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.kanadets.RoomScanProto"
     },
     "web": {
       "output": "static",
@@ -37,6 +43,14 @@
           "backgroundColor": "#ffffff",
           "dark": {
             "backgroundColor": "#000000"
+          }
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "17.0"
           }
         }
       ]
