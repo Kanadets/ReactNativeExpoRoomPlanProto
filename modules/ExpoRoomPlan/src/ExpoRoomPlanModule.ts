@@ -11,6 +11,7 @@ declare class ExpoRoomPlanModule extends NativeModule {
   getRoomScans(): Promise<string[]>;
   previewScan(path: string): Promise<void>;
   readScanJson(usdzPath: string): Promise<string | null>;
+  importScan(sourceUri: string): Promise<string | null>;
 
   clearAllScans(): Promise<void>;
 

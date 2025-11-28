@@ -1,3 +1,4 @@
+import * as DocumentPicker from "expo-document-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -31,6 +32,7 @@ export default function Index() {
   const [scanning, setScanning] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [scanName, setScanName] = useState("My Room");
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     checkSetup();
@@ -102,6 +104,55 @@ export default function Index() {
     );
   };
 
+  const handleUploadScan = async () => {
+    try {
+      setUploading(true);
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "*/*", // Accept all files, it'll be filtered by extension
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      if (result.canceled) {
+        setUploading(false);
+        return;
+      }
+
+      const file = result.assets[0];
+      if (!file.uri) {
+        Alert.alert("Error", "Failed to get file URI");
+        setUploading(false);
+        return;
+      }
+
+      // Check if file has .usdz extension
+      const fileName = file.name || "";
+      if (!fileName.toLowerCase().endsWith(".usdz")) {
+        Alert.alert(
+          "Invalid File",
+          "Please select a USDZ file (.usdz extension)"
+        );
+        setUploading(false);
+        return;
+      }
+
+      // Import the file to the app's document directory
+      const importedPath = await ExpoRoomPlanModule.importScan(file.uri);
+
+      if (importedPath) {
+        Alert.alert("Success", "Room plan uploaded successfully!");
+        loadScans(); // Refresh the list
+      } else {
+        Alert.alert("Error", "Failed to import room plan");
+      }
+    } catch (error) {
+      console.error("Upload error:", error);
+      Alert.alert("Error", `Failed to upload: ${error}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <View style={[styles.container]}>
       <View style={[styles.header, { paddingTop: insets.top }]}>
@@ -146,16 +197,34 @@ export default function Index() {
       />
 
       {/* --- New Scan Controls --- */}
-      {availability?.isAvailable && (
-        <View style={styles.controls}>
-          <Button
-            disabled={isProcessing}
-            title={isProcessing ? "Processing..." : "Start New Scan"}
-            onPress={() => setScanning(true)}
-          />
-          {isProcessing && <ActivityIndicator size="small" color="#0000ff" />}
+      <View style={styles.controls}>
+        <View style={styles.buttonRow}>
+          <View style={styles.buttonContainer}>
+            <Button
+              disabled={uploading || isProcessing}
+              title={uploading ? "Uploading..." : "📤 Upload USDZ"}
+              onPress={handleUploadScan}
+              color="#34C759"
+            />
+          </View>
+          {availability?.isAvailable && (
+            <View style={styles.buttonContainer}>
+              <Button
+                disabled={isProcessing || uploading}
+                title={isProcessing ? "Processing..." : "Start New Scan"}
+                onPress={() => setScanning(true)}
+              />
+            </View>
+          )}
         </View>
-      )}
+        {(isProcessing || uploading) && (
+          <ActivityIndicator
+            size="small"
+            color="#0000ff"
+            style={styles.loader}
+          />
+        )}
+      </View>
 
       {/* --- Scanner Modal --- */}
       <Modal
@@ -220,11 +289,19 @@ const styles = StyleSheet.create({
     backgroundColor: "white",
     borderTopWidth: 1,
     borderColor: "#eee",
-    display: "flex",
+  },
+  buttonRow: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
     gap: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  buttonContainer: {
+    flex: 1,
+    minWidth: 120,
+  },
+  loader: {
+    marginTop: 10,
   },
   input: {
     borderWidth: 1,

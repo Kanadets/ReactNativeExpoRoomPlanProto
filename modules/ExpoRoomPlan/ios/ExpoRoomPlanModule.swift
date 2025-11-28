@@ -98,6 +98,57 @@ public class ExpoRoomPlanModule: Module {
                 return nil
             }
         }
+        
+        AsyncFunction("importScan") { (sourceUri: String) -> String? in
+            let fileManager = FileManager.default
+            let docPath = fileManager.urls(
+                for: .documentDirectory,
+                in: .userDomainMask
+            ).first!
+            
+            // Generate a unique UUID for the new file
+            let uuid = UUID()
+            let fileName = "\(uuid.uuidString).usdz"
+            let destinationURL = docPath.appendingPathComponent(fileName)
+            
+            // Handle file:// URLs from expo-document-picker
+            // expo-document-picker with copyToCacheDirectory returns file:// URIs
+            let sourceURL: URL
+            if let url = URL(string: sourceUri), url.scheme == "file" {
+                // Properly handle file:// URLs
+                sourceURL = url
+            } else if sourceUri.hasPrefix("file://") {
+                // Fallback: manually parse file:// URL
+                let path = String(sourceUri.dropFirst(7))
+                // Handle URL-encoded paths (e.g., spaces become %20)
+                if let decodedPath = path.removingPercentEncoding {
+                    sourceURL = URL(fileURLWithPath: decodedPath)
+                } else {
+                    sourceURL = URL(fileURLWithPath: path)
+                }
+            } else {
+                // Direct file path (shouldn't happen with expo-document-picker, but handle it)
+                sourceURL = URL(fileURLWithPath: sourceUri)
+            }
+            
+            do {
+                // Ensure the source file exists
+                guard fileManager.fileExists(atPath: sourceURL.path) else {
+                    print("Source file does not exist at: \(sourceURL.path)")
+                    return nil
+                }
+                
+                // Copy the file to the document directory
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+                print("Successfully imported scan to: \(destinationURL.path)")
+                return destinationURL.path
+            } catch {
+                print("Failed to import scan: \(error.localizedDescription)")
+                print("Source URI: \(sourceUri)")
+                print("Source URL path: \(sourceURL.path)")
+                return nil
+            }
+        }
 
         View(ExpoRoomPlanView.self) {
             Events("onScanProcessing")
