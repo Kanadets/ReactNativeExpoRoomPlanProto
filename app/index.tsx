@@ -1,3 +1,4 @@
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -19,6 +20,7 @@ import ExpoRoomPlanModule, {
 } from "@/modules/ExpoRoomPlan";
 
 export default function Index() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
 
   console.log("ExpoRoomPlanModule");
@@ -102,7 +104,7 @@ export default function Index() {
 
   return (
     <View style={[styles.container]}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top }]}>
         <View>
           <Text style={styles.title}>Room Scanner</Text>
           <Text>
@@ -127,11 +129,17 @@ export default function Index() {
         renderItem={({ item }) => (
           <TouchableOpacity
             style={styles.scanItem}
-            onPress={() => ExpoRoomPlanModule.previewScan(item)}
+            onPress={() =>
+              router.push(`/scan-details?scanPath=${encodeURIComponent(item)}`)
+            }
+            onLongPress={() => ExpoRoomPlanModule.previewScan(item)}
           >
             <Text style={styles.scanTitle}>📄 {item.split("/").pop()}</Text>
             <Text style={styles.scanPath} numberOfLines={1}>
               {item}
+            </Text>
+            <Text style={styles.hintText}>
+              Tap to view details • Long press to preview
             </Text>
           </TouchableOpacity>
         )}
@@ -206,6 +214,7 @@ const styles = StyleSheet.create({
   },
   scanTitle: { fontSize: 16, fontWeight: "600" },
   scanPath: { fontSize: 12, color: "#888", marginTop: 4 },
+  hintText: { fontSize: 10, color: "#aaa", marginTop: 4, fontStyle: "italic" },
   controls: {
     padding: 20,
     backgroundColor: "white",

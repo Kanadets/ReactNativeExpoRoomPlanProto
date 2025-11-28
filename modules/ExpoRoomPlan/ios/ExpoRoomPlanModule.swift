@@ -85,6 +85,19 @@ public class ExpoRoomPlanModule: Module {
                 }
             }
         }
+        
+        AsyncFunction("readScanJson") { (usdzPath: String) -> String? in
+            // Convert USDZ path to JSON path
+            let jsonPath = usdzPath.replacingOccurrences(of: ".usdz", with: ".json")
+            let jsonURL = URL(fileURLWithPath: jsonPath)
+            
+            do {
+                let jsonData = try Data(contentsOf: jsonURL)
+                return String(data: jsonData, encoding: .utf8)
+            } catch {
+                return nil
+            }
+        }
 
         View(ExpoRoomPlanView.self) {
             Events("onScanProcessing")

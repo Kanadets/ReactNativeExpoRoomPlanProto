@@ -10,6 +10,7 @@ declare class ExpoRoomPlanModule extends NativeModule {
   checkAvailability(): Promise<ExpoRoomPlanAvailability>;
   getRoomScans(): Promise<string[]>;
   previewScan(path: string): Promise<void>;
+  readScanJson(usdzPath: string): Promise<string | null>;
 
   clearAllScans(): Promise<void>;
 
