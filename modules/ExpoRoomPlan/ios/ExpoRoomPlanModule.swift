@@ -25,14 +25,14 @@ public class ExpoRoomPlanModule: Module {
                 for: .documentDirectory,
                 in: .userDomainMask
             ).first!
-
+            
             do {
                 // Get contents including properties for Creation Date
                 let fileURLs = try FileManager.default.contentsOfDirectory(
                     at: docPath,
                     includingPropertiesForKeys: [.creationDateKey]
                 )
-
+                
                 // Filter for USDZ and Sort by Date (Newest First)
                 let sortedUSDZFiles = fileURLs
                     .filter { $0.pathExtension == "usdz" }
@@ -41,7 +41,7 @@ public class ExpoRoomPlanModule: Module {
                         let date2 = (try? url2.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date.distantPast
                         return date1 > date2
                     }
-
+                
                 return sortedUSDZFiles.map { $0.path }
             } catch {
                 // If reading the directory fails, return an empty list instead of an optional
@@ -51,12 +51,12 @@ public class ExpoRoomPlanModule: Module {
         
         AsyncFunction("previewScan") { (path: String) in
             let url = URL(fileURLWithPath: path)
-
+            
             DispatchQueue.main.async {
                 let previewController = QLPreviewController()
                 let dataSource = PreviewDataSource(url: url)
                 previewController.dataSource = dataSource
-
+                
                 if let currentVC = self.appContext?.utilities?
                     .currentViewController()
                 {
@@ -71,13 +71,13 @@ public class ExpoRoomPlanModule: Module {
                 for: .documentDirectory,
                 in: .userDomainMask
             ).first!
-
+            
             // Get all files in the directory
             let fileURLs = try fileManager.contentsOfDirectory(
                 at: docPath,
                 includingPropertiesForKeys: nil
             )
-
+            
             // Iterate and delete specific file types
             for url in fileURLs {
                 if url.pathExtension == "usdz" || url.pathExtension == "json" {
@@ -86,17 +86,21 @@ public class ExpoRoomPlanModule: Module {
             }
         }
         
-        AsyncFunction("readScanJson") { (usdzPath: String) -> String? in
-            // Convert USDZ path to JSON path
-            let jsonPath = usdzPath.replacingOccurrences(of: ".usdz", with: ".json")
-            let jsonURL = URL(fileURLWithPath: jsonPath)
+        AsyncFunction("readScanJson") { (path: String) -> String? in
+            // CLEAN THE PATH: Remove file:// if present
+            let cleanPath = path.replacingOccurrences(of: "file://", with: "")
             
-            do {
-                let jsonData = try Data(contentsOf: jsonURL)
-                return String(data: jsonData, encoding: .utf8)
-            } catch {
-                return nil
+            let fileManager = FileManager.default
+            if fileManager.fileExists(atPath: cleanPath) {
+                do {
+                    let content = try String(contentsOfFile: cleanPath, encoding: .utf8)
+                    return content
+                } catch {
+                    print("Error reading JSON: \(error)")
+                    return nil
+                }
             }
+            return nil
         }
         
         AsyncFunction("importScan") { (sourceUri: String) -> String? in
@@ -149,15 +153,26 @@ public class ExpoRoomPlanModule: Module {
                 return nil
             }
         }
-
+        
         View(ExpoRoomPlanView.self) {
-            Events("onScanProcessing")
-
             Prop("scanName") { (view: ExpoRoomPlanView, name: String) in
                 view.scanName = name
             }
+            
+            Events("onScanProcessing")
+        }
+        
+    
+        
+        View(ExpoRoomPlanModelView.self) {
+            ViewName("ExpoRoomPlanModelView")
+            
+            Prop("modelPath") { (view: ExpoRoomPlanModelView, value: String?) in
+                view.modelPath = value
+            }
         }
     }
+    
 }
 
 // MARK: - Check if device supports RoomPlanAPI
@@ -175,7 +190,7 @@ private func getExpoRoomPlanAvailability() async -> ExpoRoomPlanAvailability {
     return availability
 }
 
-//MARK: - For file viewing
+// MARK: - For file viewing
 // Helper for QuickLook
 class PreviewDataSource: NSObject, QLPreviewControllerDataSource {
     let url: URL

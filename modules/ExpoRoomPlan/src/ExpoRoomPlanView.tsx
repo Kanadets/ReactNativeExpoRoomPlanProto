@@ -8,7 +8,7 @@ export type ExpoRoomPlanViewProps = {
 } & ViewProps;
 
 const NativeView: React.ComponentType<ExpoRoomPlanViewProps> =
-  requireNativeViewManager("ExpoRoomPlan");
+  requireNativeViewManager("ExpoRoomPlan_ExpoRoomPlanView");
 
 export default function ExpoRoomPlanView(props: ExpoRoomPlanViewProps) {
   return <NativeView {...props} />;
