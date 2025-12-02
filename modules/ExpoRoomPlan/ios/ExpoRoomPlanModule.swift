@@ -172,13 +172,13 @@ public class ExpoRoomPlanModule: Module {
             Events("onScanProcessing")
         }
 
-        View(ExpoRoomPlanModelView.self) {
-            ViewName("ExpoRoomPlanModelView")
-
-            Prop("modelPath") { (view: ExpoRoomPlanModelView, value: String?) in
-                view.modelPath = value
-            }
-        }
+//        View(ExpoRoomPlanModelView.self) {
+//            ViewName("ExpoRoomPlanModelView")
+//
+//            Prop("modelPath") { (view: ExpoRoomPlanModelView, value: String?) in
+//                view.modelPath = value
+//            }
+//        }
     }
 
 }

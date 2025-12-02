@@ -13,9 +13,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import ExpoRoomPlanModule, {
-  ExpoRoomPlanModelView,
-} from "@/modules/ExpoRoomPlan";
+import ExpoRoomPlanModule from "@/modules/ExpoRoomPlan";
 
 export default function ScanDetails() {
   const router = useRouter();
@@ -127,7 +125,7 @@ export default function ScanDetails() {
       </View>
 
       {/* 3D Model Section */}
-      {paths?.model && (
+      {/* {paths?.model && (
         <View style={styles.modelViewerContainer}>
           <Text style={styles.sectionTitle}>3D Model</Text>
           <View style={styles.modelViewer}>
@@ -137,7 +135,7 @@ export default function ScanDetails() {
             />
           </View>
         </View>
-      )}
+      )} */}
 
       {/* JSON Data Section */}
       <ScrollView style={styles.content}>
