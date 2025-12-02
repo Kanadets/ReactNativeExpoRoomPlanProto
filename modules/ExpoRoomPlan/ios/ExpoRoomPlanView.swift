@@ -26,7 +26,7 @@ class ExpoRoomPlanView: ExpoView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        
+
         if #available(iOS 17.0, *) {
             guard let captureView = roomCaptureView as? RoomCaptureView else {
                 return

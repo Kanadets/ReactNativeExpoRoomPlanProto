@@ -6,7 +6,6 @@ export type ExpoRoomPlanModelViewProps = {
   modelPath?: string;
 } & ViewProps;
 
-// Use the full namespaced name that Expo creates
 const NativeView: React.ComponentType<ExpoRoomPlanModelViewProps> =
   requireNativeViewManager("ExpoRoomPlan_ExpoRoomPlanModelView");
 

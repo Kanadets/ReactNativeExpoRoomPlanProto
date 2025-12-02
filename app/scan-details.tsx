@@ -3,7 +3,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -19,43 +21,34 @@ export default function ScanDetails() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  // This usually comes in as ".../Documents/MyRoom.usdz" or ".../Documents/MyRoom.json"
-  // Note: This path might be "stale" (from a previous app session), so we only use the filename.
   const { scanPath } = useLocalSearchParams<{ scanPath: string }>();
 
   const [jsonData, setJsonData] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // We calculate the correct paths for both files
   const [paths, setPaths] = useState<{ model: string; json: string } | null>(
     null
   );
 
   useEffect(() => {
     if (scanPath) {
-      // 1. Extract just the filename (e.g., "5B18...8582.usdz")
       const fileName = scanPath.split("/").pop();
       if (!fileName) return;
 
-      // 2. Remove extension to get the unique ID
       const baseName = fileName.replace(".json", "").replace(".usdz", "");
 
-      // 3. Reconstruct the path using Expo's SAFE document directory constant.
-      // Paths.document.uri is guaranteed to be valid for the current session.
       const safeDocPath = Paths.document.uri;
 
       if (safeDocPath) {
-        // Construct the new "Fresh" paths
-        // Note: safeDocPath always ends with a '/', so we don't add another one.
         const newPaths = {
           model: `${safeDocPath}${baseName}.usdz`,
           json: `${safeDocPath}${baseName}.json`,
         };
 
-        console.log("📍 Reconstructed Path:", newPaths.model);
+        console.log("Reconstructed Path:", newPaths.model);
         setPaths(newPaths);
       } else {
-        console.error("❌ Paths.document.uri is null");
+        console.error("Paths.document.uri is null");
       }
     }
   }, [scanPath]);
@@ -85,6 +78,29 @@ export default function ScanDetails() {
       console.log("JSON Load Error:", e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleExportJson = async () => {
+    if (!paths?.json) {
+      Alert.alert("Error", "JSON file path not available");
+      return;
+    }
+
+    try {
+      const fileName = paths.json.split("/").pop() || "scan.json";
+
+      const fileUri = paths.json.startsWith("file://")
+        ? paths.json
+        : `file://${paths.json}`;
+
+      await Share.share({
+        url: fileUri,
+        title: `Export ${fileName}`,
+      });
+    } catch (error) {
+      console.error("Export error:", error);
+      Alert.alert("Error", `Failed to export JSON: ${error}`);
     }
   };
 
@@ -125,9 +141,22 @@ export default function ScanDetails() {
 
       {/* JSON Data Section */}
       <ScrollView style={styles.content}>
-        <Text style={[styles.sectionTitle, { marginLeft: 15, marginTop: 15 }]}>
-          Metadata
-        </Text>
+        <View style={styles.metadataHeader}>
+          <Text
+            style={[styles.sectionTitle, { marginLeft: 15, marginTop: 15 }]}
+          >
+            Metadata
+          </Text>
+          {!loading && paths?.json && (
+            <TouchableOpacity
+              onPress={handleExportJson}
+              style={styles.exportButton}
+            >
+              <Text style={styles.exportButtonText}>Export JSON</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
         {loading ? (
           <ActivityIndicator
             style={{ marginTop: 20 }}
@@ -200,4 +229,22 @@ const styles = StyleSheet.create({
     borderColor: "#ddd",
   },
   jsonText: { fontFamily: "monospace", fontSize: 12, color: "#333" },
+  metadataHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingRight: 15,
+  },
+  exportButton: {
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 15,
+  },
+  exportButtonText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
+  },
 });
