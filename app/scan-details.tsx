@@ -123,20 +123,7 @@ export default function ScanDetails() {
           {paths?.model || "Locating file..."}
         </Text>
       </View>
-
-      {/* 3D Model Section */}
-      {/* {paths?.model && (
-        <View style={styles.modelViewerContainer}>
-          <Text style={styles.sectionTitle}>3D Model</Text>
-          <View style={styles.modelViewer}>
-            <ExpoRoomPlanModelView
-              modelPath={paths.model}
-              style={styles.modelView}
-            />
-          </View>
-        </View>
-      )} */}
-
+      {/* TODO: Add 3D model viewer */}
       {/* JSON Data Section */}
       <ScrollView style={styles.content}>
         <View style={styles.metadataHeader}>
