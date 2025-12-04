@@ -5,10 +5,9 @@ export interface ExpoRoomPlanAvailability {
   osVersion: string;
 }
 
-export interface ExpoRoomPlanScanResult {
-  uuid?: string;
+export type ExpoRoomPlanScanResult = {
   usdzUri?: string;
   jsonUri?: string;
-  timestamp?: number;
+  totalRooms?: number;
   error?: string;
-}
+};

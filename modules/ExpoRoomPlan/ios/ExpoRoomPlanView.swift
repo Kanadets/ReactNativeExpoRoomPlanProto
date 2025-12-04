@@ -1,126 +1,213 @@
+import ARKit
 import ExpoModulesCore
 import RoomPlan
 import UIKit
 
 class ExpoRoomPlanView: ExpoView {
-    let onScanProcessing = EventDispatcher()
-    var scanName: String = "Untitled"
-    private var roomCaptureView: UIView?
-
-    required init(appContext: AppContext? = nil) {
-        super.init(appContext: appContext)
-
-        if #available(iOS 17.0, *) {
-            let view = RoomCaptureView()
-            view.delegate = self
-            self.roomCaptureView = view
-            addSubview(view)
-            print("SWIFT: RoomCaptureView initialized and delegate set")
+    
+    var projectFolderPath: String? {
+        didSet {
+            attemptInitialization()
         }
     }
-
+    
+    // Strong reference to session
+    private var internalARSession: ARSession?
+    private var roomCaptureView: RoomCaptureView?
+    private var hasInitialized = false
+    
+    required init(appContext: AppContext? = nil) {
+        super.init(appContext: appContext)
+    }
+    
     override func layoutSubviews() {
         super.layoutSubviews()
         roomCaptureView?.frame = bounds
     }
+    
+    override func willMove(toWindow newWindow: UIWindow?) {
+        super.willMove(toWindow: newWindow)
+        
+        if newWindow == nil {
+            print("SWIFT: View detaching. Pausing session.")
+            
+            roomCaptureView?.captureSession.stop()
+            internalARSession?.pause()
+        }
+    }
+    
+   
+    deinit {
+        print("SWIFT: View Deinit. Full Cleanup.")
+        
+        roomCaptureView?.captureSession.stop()
+        internalARSession?.pause()
+        internalARSession = nil
+        roomCaptureView = nil
+    }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-
-        if #available(iOS 17.0, *) {
-            guard let captureView = roomCaptureView as? RoomCaptureView else {
-                return
-            }
-
-            if self.window != nil {
-                // View is mounted -> Start Session
-                var config = RoomCaptureSession.Configuration()
-                captureView.captureSession.run(configuration: config)
-                print("SWIFT: Session Started")
-            } else {
-                // View is unmounted -> Stop Session
-                captureView.captureSession.stop()
-                print("SWIFT: Session Stopped (View removed)")
-            }
+        attemptInitialization()
+    }
+    
+    @available(iOS 17.0, *)
+    private func attemptInitialization() {
+        guard let folderPath = projectFolderPath, self.window != nil, !hasInitialized else {
+            return
         }
+        
+        hasInitialized = true
+        
+        // Create fresh session
+        let arSession = ARSession()
+        self.internalARSession = arSession
+        
+        let arConfig = ARWorldTrackingConfiguration()
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            arConfig.sceneReconstruction = .mesh
+        }
+        arConfig.planeDetection = [.horizontal, .vertical]
+        
+        // Load Map
+        let worldMapURL = URL(fileURLWithPath: folderPath).appendingPathComponent("WorldScan.map")
+        
+        // Debug Log
+        if FileManager.default.fileExists(atPath: worldMapURL.path) {
+             print("SWIFT: Map file exists at \(worldMapURL.path)")
+             if let data = try? Data(contentsOf: worldMapURL),
+                let worldMap = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: data) {
+                 arConfig.initialWorldMap = worldMap
+                 print("SWIFT: Loaded existing WorldMap. Relocalizing...")
+             } else {
+                 print("SWIFT: Map exists but failed to load data.")
+             }
+        } else {
+             print("SWIFT: No existing WorldMap file found (First scan?).")
+        }
+        
+        // Run Session
+        arSession.run(arConfig, options: [.resetTracking, .removeExistingAnchors])
+        
+        let captureView = RoomCaptureView(frame: bounds, arSession: arSession)
+        captureView.delegate = self
+        captureView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        
+        self.addSubview(captureView)
+        self.roomCaptureView = captureView
+        
+        var roomConfig = RoomCaptureSession.Configuration()
+        roomConfig.isCoachingEnabled = true
+        captureView.captureSession.run(configuration: roomConfig)
     }
 }
 
-// MARK: - Delegate Implementation
 @available(iOS 17.0, *)
 extension ExpoRoomPlanView: RoomCaptureViewDelegate {
-    func captureView(
-        shouldPresent roomDataForProcessing: CapturedRoomData,
-        error: Error?
-    ) -> Bool {
+    
+    func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: Error?) -> Bool {
+        
         if let error = error {
-            print(
-                "SWIFT: Scan failed with error: \(error.localizedDescription)"
-            )
-
+            self.appContext?.eventEmitter?.sendEvent(withName: "onScanComplete", body: ["error": error.localizedDescription])
             return false
         }
+        
+        self.appContext?.eventEmitter?.sendEvent(withName: "onScanProcessing", body: [:])
+        
+        guard let folderPath = projectFolderPath else { return false }
+        
+        
+        // Capture the session object locally so it can't be nil
+        guard let arSession = self.internalARSession else {
+             print("SWIFT ERROR: Internal ARSession is nil! (Race condition triggered)")
+             return false
+        }
 
-        print("SWIFT: Start processing")
-        onScanProcessing([:])
-
+        print("SWIFT: Starting WorldMap generation...")
+        
+        arSession.getCurrentWorldMap { worldMap, error in
+            if let error = error {
+                print("SWIFT ERROR: Map generation failed: \(error.localizedDescription)")
+            } else if let map = worldMap {
+                // Check if map is empty
+                if map.rawFeaturePoints.points.isEmpty {
+                    print("SWIFT WARNING: Map has 0 feature points. Not saving.")
+                } else {
+                    do {
+                        let data = try NSKeyedArchiver.archivedData(withRootObject: map, requiringSecureCoding: true)
+                        let worldMapURL = URL(fileURLWithPath: folderPath).appendingPathComponent("WorldScan.map")
+                        try data.write(to: worldMapURL)
+                        print("SWIFT SUCCESS: Saved WorldMap to \(worldMapURL.path)")
+                    } catch {
+                        print("SWIFT ERROR: Save failed: \(error)")
+                    }
+                }
+            } else {
+                print("SWIFT ERROR: WorldMap was nil.")
+            }
+        }
+        
         Task {
             do {
                 let builder = RoomBuilder(options: [.beautifyObjects])
-                let finalRoom = try await builder.capturedRoom(
-                    from: roomDataForProcessing
-                )
-
-                // Prepare Paths
-                let documentsPath = FileManager.default.urls(
-                    for: .documentDirectory,
-                    in: .userDomainMask
-                ).first!
-                let fileName = finalRoom.identifier.uuidString
-                let usdzURL = documentsPath.appendingPathComponent(
-                    "\(fileName).usdz"
-                )
-                let jsonURL = documentsPath.appendingPathComponent(
-                    "\(fileName).json"
-                )
-
-                // Export USDZ (3D Model)
-                try finalRoom.export(to: usdzURL)
-
-                // Export JSON (Data)
-                let jsonData = try JSONEncoder().encode(finalRoom)
-                try jsonData.write(to: jsonURL)
-
-                print("SWIFT: File operations done. preparing dispatch...")
-
-                let payload: [String: Any] = [
-                    "uuid": finalRoom.identifier.uuidString,
-                    "usdzUri": usdzURL.path,
-                    "jsonUri": jsonURL.path,
-                    "timestamp": Date().timeIntervalSince1970 * 1000,
-                    "error": "",
-                ]
-
-                print("SWIFT: Scan finished. Broadcasting global event...")
-
-                DispatchQueue.main.async {
-                    self.appContext?.eventEmitter?.sendEvent(
-                        withName: "onScanComplete",
-                        body: payload
-                    )
+                let currentRoom = try await builder.capturedRoom(from: roomDataForProcessing)
+                
+                let folderURL = URL(fileURLWithPath: folderPath)
+                if !FileManager.default.fileExists(atPath: folderURL.path) {
+                    try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
                 }
-
-            } catch {
-                // Send error globally too
+                
+                let newRoomUUID = currentRoom.identifier.uuidString
+                let newRoomJsonURL = folderURL.appendingPathComponent("\(newRoomUUID).json")
+                try JSONEncoder().encode(currentRoom).write(to: newRoomJsonURL)
+                
+                let masterViewURL = folderURL.appendingPathComponent("MasterView.usdz")
+                
+                let fileURLs = try FileManager.default.contentsOfDirectory(at: folderURL, includingPropertiesForKeys: nil)
+                var allRooms: [CapturedRoom] = []
+                
+                for url in fileURLs {
+                    if url.pathExtension == "json" {
+                        if let data = try? Data(contentsOf: url),
+                           let room = try? JSONDecoder().decode(CapturedRoom.self, from: data) {
+                            allRooms.append(room)
+                        }
+                    }
+                }
+                
+                if FileManager.default.fileExists(atPath: masterViewURL.path) {
+                    try FileManager.default.removeItem(at: masterViewURL)
+                }
+                
+                if allRooms.count > 1 {
+                    do {
+                        let structureBuilder = StructureBuilder(options: [.beautifyObjects])
+                        let mergedStructure = try await structureBuilder.capturedStructure(from: allRooms)
+                        try mergedStructure.export(to: masterViewURL)
+                    } catch {
+                        try currentRoom.export(to: masterViewURL)
+                    }
+                } else {
+                    try currentRoom.export(to: masterViewURL)
+                }
+                
+                let payload: [String: Any] = [
+                    "usdzUri": masterViewURL.path,
+                    "jsonUri": newRoomJsonURL.path,
+                    "totalRooms": allRooms.count
+                ]
+                
                 DispatchQueue.main.async {
-                    self.appContext?.eventEmitter?.sendEvent(
-                        withName: "onScanComplete",
-                        body: ["error": error.localizedDescription]
-                    )
+                    self.appContext?.eventEmitter?.sendEvent(withName: "onScanComplete", body: payload)
+                }
+                
+            } catch {
+                DispatchQueue.main.async {
+                    self.appContext?.eventEmitter?.sendEvent(withName: "onScanComplete", body: ["error": error.localizedDescription])
                 }
             }
         }
-
+        
         return false
     }
 }

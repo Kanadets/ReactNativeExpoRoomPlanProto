@@ -1,12 +1,11 @@
 import * as DocumentPicker from "expo-document-picker";
-import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { Directory, File, Paths } from "expo-file-system";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
-  Button,
   FlatList,
-  Modal,
+  RefreshControl,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -14,78 +13,80 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import ExpoRoomPlanModule, {
-  ExpoRoomPlanAvailability,
-  ExpoRoomPlanScanResult,
-  ExpoRoomPlanView,
-} from "@/modules/ExpoRoomPlan";
+import ExpoRoomPlanModule from "@/modules/ExpoRoomPlan";
 
 export default function Index() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  console.log("ExpoRoomPlanModule");
+  const [projects, setProjects] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [isAvailable, setIsAvailable] = useState(false);
 
-  const [availability, setAvailability] =
-    useState<ExpoRoomPlanAvailability | null>(null);
-  const [scans, setScans] = useState<string[]>([]);
-  const [scanning, setScanning] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [scanName, setScanName] = useState("My Room");
-  const [uploading, setUploading] = useState(false);
-
+  // Check Availability on Mount
   useEffect(() => {
-    checkSetup();
+    ExpoRoomPlanModule.checkAvailability().then((status) => {
+      setIsAvailable(status.isAvailable);
+    });
   }, []);
 
-  useEffect(() => {
-    const subscription = ExpoRoomPlanModule.addListener(
-      "onScanComplete",
-      (event) => {
-        // Handle the global event
-        handleScanComplete(event);
-      }
-    );
+  // Load Projects whenever screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadProjects(false);
+    }, [])
+  );
 
-    return () => {
-      subscription.remove();
-    };
-  }, []);
-
-  const checkSetup = async () => {
-    const avail = await ExpoRoomPlanModule.checkAvailability();
-    setAvailability(avail);
-    loadScans();
-  };
-
-  const loadScans = async () => {
+  const loadProjects = async (isManualRefresh = false) => {
     try {
-      const files = await ExpoRoomPlanModule.getRoomScans();
-      setScans(files);
+      if (isManualRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      const docUri = Paths.document.uri;
+
+      const docDirectory = new Directory(docUri);
+      const items = await docDirectory.list();
+
+      const projectFolders = [];
+
+      for (const item of items) {
+        if (item.name.startsWith(".")) continue;
+
+        if (item instanceof Directory) {
+          projectFolders.push(item.name);
+        }
+      }
+
+      setProjects(projectFolders.reverse());
     } catch (e) {
-      console.error("Failed to load scans", e);
+      console.error("Error loading projects", e);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const handleScanComplete = (event: ExpoRoomPlanScanResult) => {
-    const { timestamp, error, usdzUri } = event;
-
-    console.log("Scan complete at", timestamp);
-    setScanning(false);
-
-    if (error) {
-      alert("Scan failed: " + error);
-    } else {
-      console.log("Saved at:", usdzUri);
-      setIsProcessing(false);
-      loadScans(); // Refresh list
+  const handleCreateNewProject = () => {
+    if (!isAvailable) {
+      Alert.alert("Not Supported", "Your device does not support RoomPlan.");
+      return;
     }
+
+    // Generate a unique ID for the new folder
+    const newProjectId = `Room_${Date.now()}`;
+
+    // Navigate immediately. ScanDetails will create the folder.
+    router.push(`/scan-details?projectId=${newProjectId}`);
   };
 
-  const handleClearAll = () => {
+  const handleDeleteProject = (folderName: string) => {
     Alert.alert(
-      "Delete All Scans",
-      "Are you sure you want to delete all room scans? This cannot be undone.",
+      "Delete Project",
+      `Are you sure you want to delete ${folderName}?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -93,10 +94,16 @@ export default function Index() {
           style: "destructive",
           onPress: async () => {
             try {
-              await ExpoRoomPlanModule.clearAllScans();
-              setScans([]); // Clear the list in UI immediately
+              const uri = `${Paths.document.uri}${folderName}`;
+
+              // Use the new Directory API instead of deprecated deleteAsync
+              const directory = new Directory(uri);
+              await directory.delete();
+
+              loadProjects();
             } catch (e) {
-              console.error("Failed to clear scans", e);
+              Alert.alert("Error", "Could not delete project");
+              console.error(e);
             }
           },
         },
@@ -104,228 +111,154 @@ export default function Index() {
     );
   };
 
-  const handleUploadScan = async () => {
+  const handleImport = async () => {
     try {
-      setUploading(true);
       const result = await DocumentPicker.getDocumentAsync({
-        type: "*/*", // Accept all files, it'll be filtered by extension
+        type: "model/vnd.usdz+zip",
         copyToCacheDirectory: true,
-        multiple: false,
       });
 
-      if (result.canceled) {
-        setUploading(false);
-        return;
-      }
-
+      if (result.canceled) return;
       const file = result.assets[0];
-      if (!file.uri) {
-        Alert.alert("Error", "Failed to get file URI");
-        setUploading(false);
-        return;
-      }
 
-      // Check if file has .usdz extension
-      const fileName = file.name || "";
-      if (!fileName.toLowerCase().endsWith(".usdz")) {
-        Alert.alert(
-          "Invalid File",
-          "Please select a USDZ file (.usdz extension)"
-        );
-        setUploading(false);
-        return;
-      }
+      const newProjectId = `Import_${Date.now()}`;
+      const newFolderUri = `${Paths.document.uri}${newProjectId}/`;
 
-      // Import the file to the app's document directory
-      const importedPath = await ExpoRoomPlanModule.importScan(file.uri);
+      const newDirectory = new Directory(newFolderUri);
+      await newDirectory.create({ intermediates: true });
 
-      if (importedPath) {
-        Alert.alert("Success", "Room plan uploaded successfully!");
-        loadScans(); // Refresh the list
-      } else {
-        Alert.alert("Error", "Failed to import room plan");
-      }
-    } catch (error) {
-      console.error("Upload error:", error);
-      Alert.alert("Error", `Failed to upload: ${error}`);
-    } finally {
-      setUploading(false);
+      const sourceFile = new File(file.uri);
+      const destFile = new File(`${newFolderUri}MasterView.usdz`);
+      await sourceFile.copy(destFile);
+
+      loadProjects();
+      Alert.alert("Success", "Imported into new project: " + newProjectId);
+    } catch (e) {
+      Alert.alert("Import Failed", String(e));
     }
   };
 
   return (
-    <View style={[styles.container]}>
-      <View style={[styles.header, { paddingTop: insets.top }]}>
-        <View>
-          <Text style={styles.title}>Room Scanner</Text>
-          <Text>
-            Status: {availability?.isAvailable ? "Ready" : "Unavailable"}
-          </Text>
-        </View>
-        {scans.length > 0 && (
-          <Button title="Clear All" color="red" onPress={handleClearAll} />
-        )}
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.header}>
+        <Text style={styles.title}>My Rooms</Text>
+        <TouchableOpacity onPress={handleImport}>
+          <Text style={styles.importText}>Import USDZ</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* --- Scan List --- */}
       <FlatList
-        data={scans}
+        data={projects}
         keyExtractor={(item) => item}
-        style={styles.list}
-        ListEmptyComponent={
-          <Text style={{ textAlign: "center", marginTop: 20 }}>
-            No scans yet
-          </Text>
+        contentContainerStyle={styles.listContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => loadProjects(true)}
+          />
         }
-        renderItem={({ item }) => {
-          console.log("item", item);
-          return (
-            <TouchableOpacity
-              style={styles.scanItem}
-              onPress={() =>
-                router.push(
-                  `/scan-details?scanPath=${encodeURIComponent(item)}`
-                )
-              }
-              onLongPress={() => ExpoRoomPlanModule.previewScan(item)}
-            >
-              <Text style={styles.scanTitle}>📄 {item.split("/").pop()}</Text>
-              <Text style={styles.scanPath} numberOfLines={1}>
-                {item}
-              </Text>
-              <Text style={styles.hintText}>
-                Tap to view details • Long press to preview
-              </Text>
-            </TouchableOpacity>
-          );
-        }}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>No projects found.</Text>
+            <Text style={styles.emptySubText}>
+              Create a new project to start scanning.
+            </Text>
+          </View>
+        }
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={styles.card}
+            onPress={() => router.push(`/scan-details?projectId=${item}`)}
+            onLongPress={() => handleDeleteProject(item)}
+          >
+            <View style={styles.cardIcon}>
+              <Text style={{ fontSize: 24 }}>🏠</Text>
+            </View>
+            <View style={styles.cardContent}>
+              <Text style={styles.cardTitle}>{item}</Text>
+              <Text style={styles.cardSubtitle}>Tap to open</Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
+        )}
       />
 
-      {/* --- New Scan Controls --- */}
-      <View style={styles.controls}>
-        <View style={styles.buttonRow}>
-          <View style={styles.buttonContainer}>
-            <Button
-              disabled={uploading || isProcessing}
-              title={uploading ? "Uploading..." : "📤 Upload USDZ"}
-              onPress={handleUploadScan}
-              color="#34C759"
-            />
-          </View>
-          {availability?.isAvailable && (
-            <View style={styles.buttonContainer}>
-              <Button
-                disabled={isProcessing || uploading}
-                title={isProcessing ? "Processing..." : "Start New Scan"}
-                onPress={() => setScanning(true)}
-              />
-            </View>
-          )}
-        </View>
-        {(isProcessing || uploading) && (
-          <ActivityIndicator
-            size="small"
-            color="#0000ff"
-            style={styles.loader}
-          />
-        )}
+      <View style={styles.footer}>
+        <TouchableOpacity
+          style={[styles.fab, !isAvailable && { backgroundColor: "#ccc" }]}
+          disabled={!isAvailable}
+          onPress={handleCreateNewProject}
+        >
+          <Text style={styles.fabText}>+ New Scan</Text>
+        </TouchableOpacity>
       </View>
-
-      {/* --- Scanner Modal --- */}
-      <Modal
-        visible={scanning}
-        animationType="slide"
-        presentationStyle="fullScreen"
-      >
-        <View style={{ flex: 1, backgroundColor: "black" }}>
-          <ExpoRoomPlanView
-            style={{ flex: 1 }}
-            scanName={scanName}
-            onScanProcessing={() => setIsProcessing(true)}
-          />
-
-          {/* Overlay UI */}
-          <View style={styles.overlay}>
-            {isProcessing ? (
-              <View style={styles.processingBadge}>
-                <Text style={{ color: "white", fontWeight: "bold" }}>
-                  Processing Room...
-                </Text>
-                <Text style={{ color: "#ddd", fontSize: 12 }}>Please wait</Text>
-              </View>
-            ) : (
-              <Button
-                title="Cancel"
-                color="white"
-                onPress={() => setScanning(false)}
-              />
-            )}
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f5f5f5" },
+  container: { flex: 1, backgroundColor: "#F2F2F7" },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 15,
     backgroundColor: "white",
     borderBottomWidth: 1,
-    borderColor: "#eee",
+    borderColor: "#E5E5EA",
   },
-  title: { fontSize: 24, fontWeight: "bold" },
-  list: { flex: 1, padding: 15 },
-  scanItem: {
+  title: { fontSize: 28, fontWeight: "bold", color: "#000" },
+  importText: { fontSize: 16, color: "#007AFF" },
+  listContent: { padding: 16 },
+  card: {
     backgroundColor: "white",
-    padding: 15,
-    marginBottom: 10,
-    borderRadius: 8,
-  },
-  scanTitle: { fontSize: 16, fontWeight: "600" },
-  scanPath: { fontSize: 12, color: "#888", marginTop: 4 },
-  hintText: { fontSize: 10, color: "#aaa", marginTop: 4, fontStyle: "italic" },
-  controls: {
-    padding: 20,
-    backgroundColor: "white",
-    borderTopWidth: 1,
-    borderColor: "#eee",
-  },
-  buttonRow: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
     flexDirection: "row",
-    gap: 10,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  cardIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: "#F2F2F7",
     justifyContent: "center",
     alignItems: "center",
+    marginRight: 16,
   },
-  buttonContainer: {
-    flex: 1,
-    minWidth: 120,
-  },
-  loader: {
-    marginTop: 10,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 10,
-  },
-  overlay: {
+  cardContent: { flex: 1 },
+  cardTitle: { fontSize: 17, fontWeight: "600", color: "#000" },
+  cardSubtitle: { fontSize: 14, color: "#8E8E93", marginTop: 2 },
+  chevron: { fontSize: 24, color: "#C7C7CC", fontWeight: "300" },
+  emptyState: { alignItems: "center", marginTop: 60 },
+  emptyText: { fontSize: 18, fontWeight: "600", color: "#333" },
+  emptySubText: { fontSize: 14, color: "#888", marginTop: 8 },
+  footer: {
+    padding: 20,
+    backgroundColor: "transparent",
     position: "absolute",
-    bottom: 50,
+    bottom: 20,
     left: 0,
     right: 0,
     alignItems: "center",
   },
-  processingBadge: {
-    backgroundColor: "#333",
-    padding: 20,
-    borderRadius: 12,
-    alignItems: "center",
+  fab: {
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderRadius: 30,
+    shadowColor: "#007AFF",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
+  fabText: { color: "white", fontSize: 18, fontWeight: "bold" },
 });

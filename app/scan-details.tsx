@@ -1,13 +1,12 @@
-import { Paths } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Button,
+  Modal,
   Platform,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -15,103 +14,161 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import ExpoRoomPlanModule from "@/modules/ExpoRoomPlan";
+import ExpoRoomPlanModule, {
+  ExpoRoomPlanScanResult,
+  ExpoRoomPlanView,
+} from "@/modules/ExpoRoomPlan";
 
 export default function ScanDetails() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { projectId } = useLocalSearchParams<{ projectId: string }>();
+  const safeProjectId = projectId || "MyDefaultProject";
 
-  const { scanPath } = useLocalSearchParams<{ scanPath: string }>();
+  // PATHS
+  const [projectPath, setProjectPath] = useState<string | null>(null);
+  const [masterViewPath, setMasterViewPath] = useState<string | null>(null);
 
+  // DATA
   const [jsonData, setJsonData] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const [paths, setPaths] = useState<{ model: string; json: string } | null>(
-    null
-  );
-
-  console.log("scanPath", scanPath);
-
-  useEffect(() => {
-    if (scanPath) {
-      const fileName = scanPath.split("/").pop();
-      if (!fileName) return;
-
-      const baseName = fileName.replace(".json", "").replace(".usdz", "");
-      const safeDocPath = Paths.document.uri;
-
-      if (safeDocPath) {
-        setPaths({
-          model: `${safeDocPath}${baseName}.usdz`,
-          json: `${safeDocPath}${baseName}.json`,
-        });
-      }
-    }
-  }, [scanPath]);
-
-  useEffect(() => {
-    if (paths?.json) {
-      loadJsonData(paths.json);
-    }
-  }, [paths]);
+  const [scanning, setScanning] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [roomCount, setRoomCount] = useState(0);
 
   const loadJsonData = async (path: string) => {
     try {
       setLoading(true);
       const json = await ExpoRoomPlanModule.readScanJson(path);
-
       if (json) {
-        try {
-          const parsed = JSON.parse(json);
-
-          // --- CHANGE 1: Remove the heavy "coreModel" data ---
-          if (parsed.coreModel) {
-            delete parsed.coreModel;
-            // Optional: Add a note so you know it was removed
-            parsed["_NOTE_"] = "coreModel removed for display performance";
-          }
-
-          // Re-stringify the cleaner object
-          setJsonData(JSON.stringify(parsed, null, 2));
-        } catch (parseError) {
-          console.log("JSON Parse Error:", parseError);
-          // If parsing fails, fall back to raw text (truncated just in case)
-          setJsonData(json.slice(0, 1000) + "\n... (JSON Parse Failed)");
-        }
-      } else {
-        setJsonData("No JSON data found.");
+        const parsed = JSON.parse(json);
+        if (parsed.coreModel) delete parsed.coreModel;
+        setJsonData(JSON.stringify(parsed, null, 2));
       }
     } catch (e) {
-      setJsonData("Error loading JSON.");
-      console.log("JSON Load Error:", e);
+      setJsonData("Error loading JSON");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleExportJson = async () => {
-    if (!paths?.json) {
-      Alert.alert("Error", "JSON file path not available");
+  // SETUP FOLDER
+  useEffect(() => {
+    const setupFolder = async () => {
+      const folderUri = `${Paths.document.uri}${safeProjectId}/`;
+      const dir = new Directory(folderUri);
+      if (!dir.exists) {
+        await dir.create({ intermediates: true });
+      }
+
+      // Store clean path for Swift
+      const cleanPath = folderUri.replace("file://", "");
+      setProjectPath(cleanPath);
+      setMasterViewPath(`${cleanPath}MasterView.usdz`);
+    };
+
+    setupFolder();
+  }, [safeProjectId]);
+
+  // LOAD EXISTING SCANS
+  useEffect(() => {
+    const loadExistingScans = async () => {
+      if (!projectPath) return;
+
+      try {
+        setLoading(true);
+        const folderUri = `${Paths.document.uri}${safeProjectId}/`;
+        const dir = new Directory(folderUri);
+
+        if (!dir.exists) {
+          setLoading(false);
+          return;
+        }
+
+        const items = await dir.list();
+        const jsonFiles: File[] = [];
+        let masterViewExists = false;
+
+        for (const item of items) {
+          if (item instanceof File) {
+            if (item.name.endsWith(".json")) {
+              jsonFiles.push(item);
+            } else if (item.name === "MasterView.usdz") {
+              masterViewExists = true;
+            }
+          }
+        }
+
+        // Set room count based on JSON files found
+        setRoomCount(jsonFiles.length);
+
+        // Set masterViewPath if MasterView.usdz exists
+        if (!masterViewExists) {
+          setMasterViewPath(null);
+        }
+
+        // Load the last JSON file (most likely the most recent)
+        // Since we can't easily get modification time with the new API,
+        // we'll just load the last file from the list
+        if (jsonFiles.length > 0) {
+          const lastJsonFile = jsonFiles[jsonFiles.length - 1];
+          const jsonPath = lastJsonFile.uri.replace("file://", "");
+          await loadJsonData(jsonPath);
+        }
+      } catch (e) {
+        console.error("Error loading existing scans:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadExistingScans();
+  }, [projectPath, safeProjectId]);
+
+  // LISTEN FOR EVENTS
+  useEffect(() => {
+    const subscription = ExpoRoomPlanModule.addListener(
+      "onScanComplete",
+      (event: ExpoRoomPlanScanResult) => {
+        console.log("Scan Complete Event:", event);
+        onScanComplete(event);
+      }
+    );
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  const onScanComplete = (event: ExpoRoomPlanScanResult) => {
+    console.log("Scan Complete Payload:", event);
+    const { usdzUri, jsonUri, totalRooms, error } = event;
+
+    if (error) {
+      alert(`Error: ${error}`);
+      setScanning(false);
       return;
     }
 
-    try {
-      const fileName = paths.json.split("/").pop() || "scan.json";
-      const fileUri = paths.json.startsWith("file://")
-        ? paths.json
-        : `file://${paths.json}`;
+    if (totalRooms) setRoomCount(totalRooms);
 
-      await Share.share({
-        url: fileUri,
-        title: `Export ${fileName}`,
-      });
-    } catch (error) {
-      console.error("Export error:", error);
-      Alert.alert("Error", `Failed to export JSON: ${error}`);
+    // Update the master path from the event, just in case
+    if (usdzUri) {
+      setMasterViewPath(usdzUri);
     }
+
+    if (jsonUri) loadJsonData(jsonUri);
+
+    setScanning(false);
   };
 
-  const fileName = scanPath?.split("/").pop() || "Unknown";
+  const handlePreview = () => {
+    if (masterViewPath) {
+      const cleanPath = masterViewPath.replace("file://", "");
+      console.log("Previewing Path:", cleanPath);
+      ExpoRoomPlanModule.previewScan(cleanPath);
+    } else {
+      alert("No MasterView.usdz found yet.");
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -122,62 +179,66 @@ export default function ScanDetails() {
         >
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>Scan Details</Text>
+        <Text style={styles.title} numberOfLines={1}>
+          {safeProjectId}
+        </Text>
         <View style={{ width: 60 }} />
       </View>
 
       <View style={styles.fileInfo}>
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            width: "80%",
-          }}
-        >
-          <Text style={styles.fileName}>{fileName}</Text>
-          <Button
-            title="Preview"
-            onPress={() => ExpoRoomPlanModule.previewScan(scanPath)}
-          />
+        <View style={styles.row}>
+          <View>
+            <Text style={styles.fileName}>
+              {roomCount > 0 ? `${roomCount} Rooms in Project` : "No scans yet"}
+            </Text>
+            <Text style={styles.filePath}>MasterView.usdz</Text>
+          </View>
+
+          <Button title="Preview Full House" onPress={handlePreview} />
         </View>
-        <Text style={styles.filePath} numberOfLines={1}>
-          {paths?.model || "Locating file..."}
-        </Text>
       </View>
 
-      <View style={styles.metadataHeader}>
-        <Text style={[styles.sectionTitle, { marginLeft: 15, marginTop: 15 }]}>
-          Metadata
-        </Text>
-        {!loading && paths?.json && (
-          <TouchableOpacity
-            onPress={handleExportJson}
-            style={styles.exportButton}
-          >
-            <Text style={styles.exportButtonText}>Export JSON</Text>
-          </TouchableOpacity>
-        )}
+      <View style={{ padding: 15 }}>
+        <Button
+          title={roomCount > 0 ? "Scan Another Room" : "Start First Scan"}
+          onPress={() => setScanning(true)}
+        />
       </View>
 
-      <ScrollView
-        style={styles.content}
-        contentContainerStyle={{ paddingBottom: 50 }}
-      >
+      <ScrollView style={styles.content}>
         {loading ? (
           <ActivityIndicator
-            style={{ marginTop: 20 }}
             size="small"
             color="#007AFF"
+            style={{ marginTop: 20 }}
           />
         ) : (
           <View style={styles.jsonContainer}>
-            {/* --- CHANGE 2: Removed slice() to show full content --- */}
+            <Text style={styles.jsonTitle}>Last Scanned Room Data:</Text>
             <Text style={styles.jsonText} selectable>
-              {jsonData || "No data loaded"}
+              {jsonData || "Scan a room to see details..."}
             </Text>
           </View>
         )}
       </ScrollView>
+
+      <Modal
+        visible={scanning}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setScanning(false)}
+      >
+        {projectPath && (
+          <ExpoRoomPlanView
+            style={{ flex: 1 }}
+            projectFolderPath={projectPath}
+            onScanProcessing={() => console.log("Scan Processing")}
+          />
+        )}
+        <View style={styles.overlay}>
+          <Button title="Cancel Scan" onPress={() => setScanning(false)} />
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -196,22 +257,20 @@ const styles = StyleSheet.create({
   },
   backButton: { padding: 8 },
   backButtonText: { fontSize: 16, color: "#007AFF" },
-  title: { fontSize: 18, fontWeight: "600" },
+  title: { fontSize: 18, fontWeight: "600", maxWidth: 200 },
   fileInfo: {
     backgroundColor: "white",
     padding: 15,
     borderBottomWidth: 1,
     borderColor: "#eee",
-    width: "100%",
   },
-  fileName: { fontSize: 16, fontWeight: "600", marginBottom: 4 },
-  filePath: { fontSize: 12, color: "#888" },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 10,
-    color: "#333",
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
+  fileName: { fontSize: 16, fontWeight: "600" },
+  filePath: { fontSize: 12, color: "#888", marginTop: 4 },
   content: { flex: 1 },
   jsonContainer: {
     backgroundColor: "white",
@@ -221,28 +280,30 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#ddd",
   },
-  jsonText: {
-    // Kept the fix for iOS fonts
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  jsonTitle: {
     fontSize: 12,
+    fontWeight: "bold",
+    marginBottom: 5,
+    color: "#555",
+  },
+  jsonText: {
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 10,
     color: "#333",
   },
-  metadataHeader: {
-    flexDirection: "row",
+  overlay: {
+    position: "absolute",
+    bottom: 50,
+    left: 20,
+    right: 20,
+    backgroundColor: "white",
+    borderRadius: 12,
+    padding: 15,
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingRight: 15,
-  },
-  exportButton: {
-    backgroundColor: "#007AFF",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginTop: 15,
-  },
-  exportButtonText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "600",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
   },
 });

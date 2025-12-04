@@ -4,11 +4,14 @@ import { ViewProps } from "react-native";
 
 export type ExpoRoomPlanViewProps = {
   scanName?: string;
+  isMultiRoom?: boolean;
+  scanPathForMultiRoom?: string;
   onScanProcessing?: () => void;
+  projectFolderPath?: string;
 } & ViewProps;
 
 const NativeView: React.ComponentType<ExpoRoomPlanViewProps> =
-  requireNativeViewManager("ExpoRoomPlan_ExpoRoomPlanView");
+  requireNativeViewManager("ExpoRoomPlan");
 
 export default function ExpoRoomPlanView(props: ExpoRoomPlanViewProps) {
   return <NativeView {...props} />;
