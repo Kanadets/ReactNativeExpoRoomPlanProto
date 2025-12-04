@@ -177,23 +177,28 @@ export default function Index() {
             No scans yet
           </Text>
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.scanItem}
-            onPress={() =>
-              router.push(`/scan-details?scanPath=${encodeURIComponent(item)}`)
-            }
-            onLongPress={() => ExpoRoomPlanModule.previewScan(item)}
-          >
-            <Text style={styles.scanTitle}>📄 {item.split("/").pop()}</Text>
-            <Text style={styles.scanPath} numberOfLines={1}>
-              {item}
-            </Text>
-            <Text style={styles.hintText}>
-              Tap to view details • Long press to preview
-            </Text>
-          </TouchableOpacity>
-        )}
+        renderItem={({ item }) => {
+          console.log("item", item);
+          return (
+            <TouchableOpacity
+              style={styles.scanItem}
+              onPress={() =>
+                router.push(
+                  `/scan-details?scanPath=${encodeURIComponent(item)}`
+                )
+              }
+              onLongPress={() => ExpoRoomPlanModule.previewScan(item)}
+            >
+              <Text style={styles.scanTitle}>📄 {item.split("/").pop()}</Text>
+              <Text style={styles.scanPath} numberOfLines={1}>
+                {item}
+              </Text>
+              <Text style={styles.hintText}>
+                Tap to view details • Long press to preview
+              </Text>
+            </TouchableOpacity>
+          );
+        }}
       />
 
       {/* --- New Scan Controls --- */}

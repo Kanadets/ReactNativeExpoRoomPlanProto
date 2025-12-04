@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Button,
+  Platform,
   ScrollView,
   Share,
   StyleSheet,
@@ -28,25 +30,21 @@ export default function ScanDetails() {
     null
   );
 
+  console.log("scanPath", scanPath);
+
   useEffect(() => {
     if (scanPath) {
       const fileName = scanPath.split("/").pop();
       if (!fileName) return;
 
       const baseName = fileName.replace(".json", "").replace(".usdz", "");
-
       const safeDocPath = Paths.document.uri;
 
       if (safeDocPath) {
-        const newPaths = {
+        setPaths({
           model: `${safeDocPath}${baseName}.usdz`,
           json: `${safeDocPath}${baseName}.json`,
-        };
-
-        console.log("Reconstructed Path:", newPaths.model);
-        setPaths(newPaths);
-      } else {
-        console.error("Paths.document.uri is null");
+        });
       }
     }
   }, [scanPath]);
@@ -61,12 +59,24 @@ export default function ScanDetails() {
     try {
       setLoading(true);
       const json = await ExpoRoomPlanModule.readScanJson(path);
+
       if (json) {
         try {
           const parsed = JSON.parse(json);
+
+          // --- CHANGE 1: Remove the heavy "coreModel" data ---
+          if (parsed.coreModel) {
+            delete parsed.coreModel;
+            // Optional: Add a note so you know it was removed
+            parsed["_NOTE_"] = "coreModel removed for display performance";
+          }
+
+          // Re-stringify the cleaner object
           setJsonData(JSON.stringify(parsed, null, 2));
-        } catch {
-          setJsonData(json);
+        } catch (parseError) {
+          console.log("JSON Parse Error:", parseError);
+          // If parsing fails, fall back to raw text (truncated just in case)
+          setJsonData(json.slice(0, 1000) + "\n... (JSON Parse Failed)");
         }
       } else {
         setJsonData("No JSON data found.");
@@ -87,7 +97,6 @@ export default function ScanDetails() {
 
     try {
       const fileName = paths.json.split("/").pop() || "scan.json";
-
       const fileUri = paths.json.startsWith("file://")
         ? paths.json
         : `file://${paths.json}`;
@@ -118,30 +127,42 @@ export default function ScanDetails() {
       </View>
 
       <View style={styles.fileInfo}>
-        <Text style={styles.fileName}>{fileName}</Text>
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            width: "80%",
+          }}
+        >
+          <Text style={styles.fileName}>{fileName}</Text>
+          <Button
+            title="Preview"
+            onPress={() => ExpoRoomPlanModule.previewScan(scanPath)}
+          />
+        </View>
         <Text style={styles.filePath} numberOfLines={1}>
           {paths?.model || "Locating file..."}
         </Text>
       </View>
-      {/* TODO: Add 3D model viewer */}
-      {/* JSON Data Section */}
-      <ScrollView style={styles.content}>
-        <View style={styles.metadataHeader}>
-          <Text
-            style={[styles.sectionTitle, { marginLeft: 15, marginTop: 15 }]}
-          >
-            Metadata
-          </Text>
-          {!loading && paths?.json && (
-            <TouchableOpacity
-              onPress={handleExportJson}
-              style={styles.exportButton}
-            >
-              <Text style={styles.exportButtonText}>Export JSON</Text>
-            </TouchableOpacity>
-          )}
-        </View>
 
+      <View style={styles.metadataHeader}>
+        <Text style={[styles.sectionTitle, { marginLeft: 15, marginTop: 15 }]}>
+          Metadata
+        </Text>
+        {!loading && paths?.json && (
+          <TouchableOpacity
+            onPress={handleExportJson}
+            style={styles.exportButton}
+          >
+            <Text style={styles.exportButtonText}>Export JSON</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={{ paddingBottom: 50 }}
+      >
         {loading ? (
           <ActivityIndicator
             style={{ marginTop: 20 }}
@@ -150,8 +171,9 @@ export default function ScanDetails() {
           />
         ) : (
           <View style={styles.jsonContainer}>
+            {/* --- CHANGE 2: Removed slice() to show full content --- */}
             <Text style={styles.jsonText} selectable>
-              {jsonData}
+              {jsonData || "No data loaded"}
             </Text>
           </View>
         )}
@@ -180,30 +202,16 @@ const styles = StyleSheet.create({
     padding: 15,
     borderBottomWidth: 1,
     borderColor: "#eee",
+    width: "100%",
   },
   fileName: { fontSize: 16, fontWeight: "600", marginBottom: 4 },
   filePath: { fontSize: 12, color: "#888" },
-  modelViewerContainer: {
-    backgroundColor: "white",
-    borderBottomWidth: 1,
-    borderColor: "#eee",
-    padding: 15,
-  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
     marginBottom: 10,
     color: "#333",
   },
-  modelViewer: {
-    height: 300,
-    borderRadius: 8,
-    overflow: "hidden",
-    backgroundColor: "#f0f0f0",
-    borderWidth: 1,
-    borderColor: "#ddd",
-  },
-  modelView: { flex: 1 },
   content: { flex: 1 },
   jsonContainer: {
     backgroundColor: "white",
@@ -213,7 +221,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#ddd",
   },
-  jsonText: { fontFamily: "monospace", fontSize: 12, color: "#333" },
+  jsonText: {
+    // Kept the fix for iOS fonts
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 12,
+    color: "#333",
+  },
   metadataHeader: {
     flexDirection: "row",
     alignItems: "center",
